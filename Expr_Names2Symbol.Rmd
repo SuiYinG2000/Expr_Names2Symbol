@@ -1,0 +1,151 @@
+---
+title: "Expr_Names2Symbol"
+author: "Botao Wang"
+date: "2022-10-13"
+output: html_document
+
+params:
+  workdir: "E:\\PostGraduate\\Botao\\RAWDATA\\CGGA\\"
+  expression_file: "result\\CGGA.mRNAseq.RSEM-genes.20200506\\CGGA.mRNAseq.RSEM-genes.20200506.ComBat.csv"
+  geneSymbolAnno: "data\\Homo_sapiens.gene_info.csv"
+  
+---
+
+```{r setup, include=FALSE}
+# rm(list = ls())
+# .rs.restartR()
+
+knitr::opts_chunk$set(echo = TRUE)
+
+# install.packages("rlist")
+
+library("log4r")
+library("rlist")
+```
+
+
+## Prepare Data
+
+```{r Prepare Data}
+
+expr <- read.csv(paste(params$workdir, params$expression_file, sep=""), check.names=F, row.names=1)
+
+geneNameAnno <- read.csv(paste(params$workdir, params$geneSymbolAnno, sep=""), check.names = F)
+
+```
+
+
+## Prepare Annotaion
+
+```{r Prepare Annotation}
+
+
+#===============================================================================
+#------------------------------ Get Annotation ---------------------------------
+#===============================================================================
+
+# Get Synonyms
+#===============================================================================
+geneNameAnno_list <- strsplit(geneNameAnno$Synonyms, split="\\|")
+names(geneNameAnno_list) <- geneNameAnno$Symbol
+
+# Get Ensembl ID
+#===============================================================================
+geneEnsAnno_list <- as.list(geneNameAnno$dbXrefs)
+names(geneEnsAnno_list) <- geneNameAnno$Symbol
+
+for (i in 1:length(geneEnsAnno_list)){
+  one_geneEnsAnno <- geneEnsAnno_list[[i]]                             
+  
+  oneGene_EnsAnnos <- c()
+  if (!is.na(one_geneEnsAnno)){
+    one_geneEnsAnno <- unlist(strsplit(one_geneEnsAnno, split="\\|"))
+      for (oneAnno in one_geneEnsAnno){
+        if (startsWith(oneAnno, "Ensembl:")){
+          oneAnno <- unlist(strsplit(oneAnno, split=":"))[2]
+          oneGene_EnsAnnos <- c(oneGene_EnsAnnos, oneAnno)
+        }
+      }
+    
+    if (!is.null(oneGene_EnsAnnos)){
+      geneEnsAnno_list[[i]] <- oneGene_EnsAnnos
+    } else {
+      geneEnsAnno_list[[i]] <- NA
+    }
+    
+  }
+}
+
+# Merge annotations
+#===============================================================================
+geneAnno_list <- geneNameAnno_list
+
+if (length(geneNameAnno_list) == length(geneEnsAnno_list)){
+  for (i in 1:length(geneNameAnno_list)){
+    if (!is.na(geneEnsAnno_list[i])){
+      geneAnno_list[[i]] <- c(geneNameAnno_list[[i]],geneEnsAnno_list[[i]])
+    }
+  }
+}
+
+
+```
+
+
+## GeneName converted to Symbol
+
+```{r Gene-Name2Symbol}
+symbol <- c()
+
+message("提示：正在将GeneName转换为Symbol：")
+progressBar <- txtProgressBar(style=3)
+
+notSymbolNum <- 0
+noMatch <- 0
+
+for (i in 1:length(rownames(expr))){
+  
+  setTxtProgressBar(progressBar, i/length(rownames(expr)))
+  
+  if (rownames(expr)[i] %in% names(geneAnno_list)){
+    symbol <- c(symbol, rownames(expr)[i])
+  } else {
+    
+    notSymbolNum <- notSymbolNum + 1
+    pos <- which(sapply(geneAnno_list, function(x){
+      rownames(expr)[i] %in% x
+    } ))
+    
+    if (length(pos) != 0){
+      symbol <- c(symbol, names(geneAnno_list)[pos[1]])
+      # 若有多个基因都有一个相同的别称，这里统一取第一个
+    } else {
+      symbol <- c(symbol, rownames(expr)[i])
+      noMatch <- noMatch + 1
+    }
+    
+  }
+}
+close(progressBar)
+
+expr <- cbind(Symbol=symbol, expr)
+expr <- aggregate(.~Symbol, expr, median)
+rownames(expr) <- expr$Symbol
+expr <- expr[, -1]
+
+```
+
+
+## save conversion
+
+```{r Save}
+
+exprFileName <- unlist(strsplit(params$expression_file, split="\\\\"))[length(unlist(strsplit(params$expression_file, split="\\\\")))]
+
+outfile <- paste(unlist(strsplit(exprFileName, split="\\."))[1:length(unlist(strsplit(exprFileName, split="\\.")))-1], collapse = ".")
+outfile <- paste(params$workdir, "\\results\\", outfile, ".Name2Symbol.csv", sep="")
+
+write.csv(expr, outfile)
+```
+
+
